@@ -1,0 +1,21 @@
+# Compiled and build artifacts (keep source .mq5 files)
+# *.mq5
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+```
