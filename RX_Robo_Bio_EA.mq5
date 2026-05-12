@@ -1,10 +1,10 @@
 //+------------------------------------------------------------------+
 //|                                             RX Robo Bio EA.mq5   |
-//|                                  Expert Advisor Template Stage 1 |
-//|                                           Visual Toggle Switch   |
+//|                                  Expert Advisor Template Stage 2 |
+//|                                     Dynamic Lot Size Calculation |
 //+------------------------------------------------------------------+
 #property copyright "RX Robo Bio EA"
-#property version   "1.00"
+#property version   "1.01"
 #property strict
 
 //--- Global Variables
@@ -14,6 +14,9 @@ int btnX = 20;                            // Koordinat X tombol (pixel dari kiri
 int btnY = 30;                            // Koordinat Y tombol (pixel dari atas)
 int btnXSize = 200;                       // Lebar tombol
 int btnYSize = 40;                        // Tinggi tombol
+
+//--- Konstanta Manajemen Risiko (Non-Negotiable)
+#define RISK_PERCENTAGE 0.01  // Risiko 1% per trade (dikunci mati, tidak bisa diubah)
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -27,6 +30,7 @@ int OnInit()
    UpdateToggleButtonState();
    
    Print("RX Robo Bio EA initialized. Auto Trading: ", isAutoTradeActive ? "ON" : "OFF");
+   Print("Risk Management Module: Locked at ", RISK_PERCENTAGE * 100, "% per trade");
    
    return(INIT_SUCCEEDED);
   }
@@ -47,8 +51,8 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
   {
-   //--- TAHAP 1: Belum ada logika trading
-   //--- Logika entry, exit, dan manajemen risiko akan ditambahkan di tahap selanjutnya
+   //--- TAHAP 2: Modul Manajemen Risiko siap digunakan
+   //--- Logika entry akan ditambahkan di tahap selanjutnya
    
    if(isAutoTradeActive)
      {
@@ -77,6 +81,84 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       //--- Cetak status ke Journal untuk verifikasi
       Print(">>> TOGGLE TRIGGERED <<< Auto Trading Status: ", isAutoTradeActive ? "ON (Hijau)" : "OFF (Merah)");
      }
+  }
+
+//+------------------------------------------------------------------+
+//| Fungsi untuk menghitung Lot Dinamis (Manajemen Risiko Wajib)     |
+//| Parameter: stopLossPips = Jarak Stop Loss dalam pips             |
+//| Return: double = Ukuran lot yang dihitung secara presisi         |
+//+------------------------------------------------------------------+
+double CalculateDynamicLot(double stopLossPips)
+  {
+   //--- Langkah 1: Hitung jumlah risiko dalam mata uang akun (1% dari Balance)
+   double riskAmount = AccountInfoDouble(ACCOUNT_BALANCE) * RISK_PERCENTAGE;
+   
+   //--- Langkah 2: Dapatkan informasi simbol untuk perhitungan presisi
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   
+   //--- Validasi data simbol (cegah division by zero)
+   if(tickValue <= 0 || tickSize <= 0 || stopLossPips <= 0)
+     {
+      Print("ERROR: Invalid symbol data for lot calculation. TickValue=", tickValue, " TickSize=", tickSize, " SL=", stopLossPips);
+      return(0);
+     }
+   
+   //--- Langkah 3: Hitung nilai per pip untuk 1 lot
+   // Rumus: Nilai per pip = (TickValue / TickSize) * (1 pip dalam poin)
+   // Di MQL5, 1 pip biasanya = 10 poin untuk 5 digit, atau 1 poin untuk 4 digit
+   // Kita gunakan pendekatan universal berdasarkan TickSize
+   double pointValue = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double pipValuePerLot = (tickValue / tickSize) * (stopLossPips * pointValue * 10); // Asumsi standar 5 digit
+   
+   // Koreksi untuk pair yang tidak standar (seperti JPY atau Crypto)
+   // Jika tickSize != point*10, sesuaikan perhitungan
+   if(MathAbs(tickSize - pointValue * 10) > pointValue) 
+     {
+      // Untuk pair seperti JPY (3 digit) atau format khusus
+      pipValuePerLot = (tickValue / tickSize) * stopLossPips * pointValue;
+     }
+   
+   //--- Langkah 4: Hitung lot teoretis berdasarkan risiko
+   // Rumus: Lot = RiskAmount / (StopLossPips * PipValuePerLot)
+   double lotRaw = riskAmount / (stopLossPips * (tickValue / tickSize) * pointValue * 10);
+   
+   //--- Langkah 5: Validasi terhadap batas broker (MIN/MAX/STEP)
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   
+   // Batasi lot minimal
+   if(lotRaw < minLot)
+     {
+      Print("WARNING: Calculated lot (", lotRaw, ") below minimum. Set to min: ", minLot);
+      lotRaw = minLot;
+     }
+   
+   // Batasi lot maksimal
+   if(lotRaw > maxLot)
+     {
+      Print("WARNING: Calculated lot (", lotRaw, ") exceeds maximum. Set to max: ", maxLot);
+      lotRaw = maxLot;
+     }
+   
+   //--- Langkah 6: Bulatkan lot sesuai step size broker
+   // Contoh: Jika step=0.01 dan lotRaw=0.123, maka jadi 0.12
+   double lotNormalized = MathFloor(lotRaw / lotStep) * lotStep;
+   
+   // Validasi akhir setelah normalisasi
+   if(lotNormalized < minLot) lotNormalized = minLot;
+   if(lotNormalized > maxLot) lotNormalized = maxLot;
+   
+   //--- Cetak info perhitungan ke journal untuk debugging
+   Print("LOT CALCULATION: Balance=", AccountInfoDouble(ACCOUNT_BALANCE), 
+         " RiskAmt=", riskAmount, 
+         " SL(pips)=", stopLossPips, 
+         " RawLot=", lotRaw, 
+         " NormalizedLot=", lotNormalized);
+   
+   return(lotNormalized);
   }
 
 //+------------------------------------------------------------------+
