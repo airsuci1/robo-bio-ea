@@ -3,15 +3,15 @@
 //|                                                                  |
 //+------------------------------------------------------------------+
 #property copyright "RX Robo Bio EA"
-#property version   "1.05"
-#property description "Scalping EA with Strict Risk Management & Price Action"
+#property version   "1.06"
+#property description "Scalping EA with Strict Risk Management, Price Action & Auto BE"
 
 #include <Trade\Trade.mqh>
 
-//--- Input Parameters (Visual Only, Logic is Hardcoded)
+//--- Input Parameters (Visual Settings)
 input group "--- Visual Settings ---"
-input color ColorDemand = clrBlue;
-input color ColorSupply = clrRed;
+input color ColorDemand = clrLightSkyBlue; // Updated for better visibility
+input color ColorSupply = clrLightPink;    // Updated for better visibility
 
 //--- Global Variables
 bool isAutoTradeActive = false;
@@ -41,7 +41,7 @@ int OnInit()
     // 1. Initialize Trade Object
     trade.SetExpertMagicNumber(123456);
     trade.SetDeviationInPoints(10);
-    trade.SetTypeFilling(ORDER_FILLING_FOK);
+    trade.SetTypeFilling(ORDER_FILLING_FOK); 
 
     // 2. Initialize EMA Handle (Trend Filter)
     emaHandle = iMA(_Symbol, _Period, 200, 0, MODE_EMA, PRICE_CLOSE);
@@ -68,7 +68,7 @@ int OnInit()
     
     UpdateButtonDisplay();
     
-    Print("RX Robo Bio EA Initialized. Waiting for setup...");
+    Print("RX Robo Bio EA Initialized (v1.06). Waiting for setup...");
     return INIT_SUCCEEDED;
 }
 
@@ -95,15 +95,18 @@ void OnTick()
     // 1. Check Auto Trading Status
     if(!isAutoTradeActive) return;
 
-    // 2. Anti-Tick Spamming: Ensure only 1 trade per candle
+    // 2. Anti-Tick Spamming: Ensure only 1 trade per candle for NEW entries
     datetime currentCandleTime = iTime(_Symbol, _Period, 0);
-    if(currentCandleTime == lastTradeTime) return;
-
+    
     // 3. Get Current Prices (MQL5 Standard)
     double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
     double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-    
-    // 4. Detect Zones if not active
+    double closePrice = iClose(_Symbol, _Period, 1);
+
+    // 4. MODULE 10: Auto Breakeven (Runs independently of zone status)
+    CheckBreakeven(ask, bid);
+
+    // 5. Detect Zones if not active
     if(!zoneIsActive)
     {
         DetectSupplyDemandZones();
@@ -111,17 +114,19 @@ void OnTick()
     else
     {
         // Check Mitigation (Zone Cleanup)
-        CheckZoneMitigation(ask, bid);
+        CheckZoneMitigation(closePrice);
         
-        // If zone still active, check for Entry
+        // If zone still active, check for Entry (Anti-Spam Check here)
         if(zoneIsActive)
         {
+            if(currentCandleTime == lastTradeTime) return; // Skip entry if already traded this candle
+
             int trend = GetTrendDirection();
             
             // BUY LOGIC
             if(trend == 1) // Uptrend
             {
-                if(IsPinbarRejection(1) && IsConfirmation(1))
+                if(IsPinbarRejection(1) && IsConfirmation(1, ask))
                 {
                     ExecuteBuyOrder(ask, bid);
                     lastTradeTime = currentCandleTime; // Lock candle
@@ -132,7 +137,7 @@ void OnTick()
             // SELL LOGIC
             if(trend == -1) // Downtrend
             {
-                if(IsPinbarRejection(-1) && IsConfirmation(-1))
+                if(IsPinbarRejection(-1) && IsConfirmation(-1, bid))
                 {
                     ExecuteSellOrder(ask, bid);
                     lastTradeTime = currentCandleTime; // Lock candle
@@ -185,7 +190,6 @@ double CalculateDynamicLot(double stopLossPoints)
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
     double riskAmount = balance * RISK_PERCENTAGE;
     
-    // FIXED: Use SYMBOL_TRADE_TICK_VALUE instead of SYMBOL_TICK_VALUE
     double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
     double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
     double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
@@ -241,25 +245,22 @@ int GetTrendDirection()
 //+------------------------------------------------------------------+
 void DetectSupplyDemandZones()
 {
-    // Look for Swing High/Low patterns on closed candles
     int lookback = 20;
     
-    // Check for Demand Zone (Drop-Base-Drop pattern reversed or Swing Low)
+    // Check for Demand Zone (Swing Low)
     for(int i = 5; i < lookback; i++)
     {
         double lowCurr = iLow(_Symbol, _Period, i);
         double lowPrev = iLow(_Symbol, _Period, i+1);
         double lowNext = iLow(_Symbol, _Period, i-1);
         
-        // Identify Swing Low
         if(lowCurr < lowPrev && lowCurr < lowNext)
         {
-            // Check Base formation (Candle i+1 has small body)
             double baseHigh = MathMax(iOpen(_Symbol, _Period, i+1), iClose(_Symbol, _Period, i+1));
             double baseLow = MathMin(iOpen(_Symbol, _Period, i+1), iClose(_Symbol, _Period, i+1));
             double baseBody = MathAbs(baseHigh - baseLow);
             
-            // FIXED: Manual ATR Calculation replacing iATR
+            // Manual ATR Calculation
             double avgRange = 0;
             for(int j=1; j<=14; j++) 
             {
@@ -267,12 +268,10 @@ void DetectSupplyDemandZones()
             }
             avgRange /= 14.0;
             
-            // Validasi: Base harus lebih kecil dari setengah rata-rata pergerakan
             if(baseBody < (avgRange * 0.5))
             {
-                // Found Demand Zone
-                zoneLowerBound = lowCurr - (10 * _Point);
-                zoneUpperBound = baseHigh + (10 * _Point);
+                zoneLowerBound = lowCurr - (10 * _Point); 
+                zoneUpperBound = baseHigh + (10 * _Point); 
                 zoneIsActive = true;
                 
                 DrawZone(zoneName, zoneUpperBound, zoneLowerBound, ColorDemand);
@@ -295,7 +294,7 @@ void DetectSupplyDemandZones()
             double baseHigh = MathMax(iOpen(_Symbol, _Period, i+1), iClose(_Symbol, _Period, i+1));
             double baseBody = MathAbs(baseHigh - baseLow);
             
-            // FIXED: Manual ATR Calculation
+            // Manual ATR Calculation
             double avgRange = 0;
             for(int j=1; j<=14; j++) 
             {
@@ -305,7 +304,6 @@ void DetectSupplyDemandZones()
             
             if(baseBody < (avgRange * 0.5))
             {
-                // Found Supply Zone
                 zoneUpperBound = highCurr + (10 * _Point);
                 zoneLowerBound = baseLow - (10 * _Point);
                 zoneIsActive = true;
@@ -323,10 +321,8 @@ void DetectSupplyDemandZones()
 //+------------------------------------------------------------------+
 void DrawZone(string name, double upper, double lower, color clr)
 {
-    // Delete existing first
     ObjectDelete(0, name);
     
-    // Create Rectangle
     datetime timeStart = iTime(_Symbol, _Period, 10);
     datetime timeEnd = iTime(_Symbol, _Period, 0) + PeriodSeconds() * 5;
     
@@ -345,10 +341,9 @@ void DrawZone(string name, double upper, double lower, color clr)
 //+------------------------------------------------------------------+
 //| Module 5: Zone Mitigation (Cleanup)                              |
 //+------------------------------------------------------------------+
-void CheckZoneMitigation(double ask, double bid)
+void CheckZoneMitigation(double closePrice)
 {
     bool mitigated = false;
-    double closePrice = iClose(_Symbol, _Period, 1);
     
     if(zoneLowerBound > 0 && zoneUpperBound > 0)
     {
@@ -373,7 +368,7 @@ void CheckZoneMitigation(double ask, double bid)
 //+------------------------------------------------------------------+
 bool IsPinbarRejection(int mode)
 {
-    int idx = 1;
+    int idx = 1; 
     double open = iOpen(_Symbol, _Period, idx);
     double close = iClose(_Symbol, _Period, idx);
     double high = iHigh(_Symbol, _Period, idx);
@@ -416,22 +411,19 @@ bool IsPinbarRejection(int mode)
 //+------------------------------------------------------------------+
 //| Module 7: Confirmation Logic                                     |
 //+------------------------------------------------------------------+
-bool IsConfirmation(int mode)
+bool IsConfirmation(int mode, double price)
 {
     int idx = 1;
     double highRej = iHigh(_Symbol, _Period, idx);
     double lowRej = iLow(_Symbol, _Period, idx);
     
-    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-    
-    if(mode == 1)
+    if(mode == 1) 
     {
-        return (ask > highRej);
+        return (price > highRej);
     }
-    else if(mode == -1)
+    else if(mode == -1) 
     {
-        return (bid < lowRej);
+        return (price < lowRej);
     }
     
     return false;
@@ -442,8 +434,8 @@ bool IsConfirmation(int mode)
 //+------------------------------------------------------------------+
 void ExecuteBuyOrder(double ask, double bid)
 {
-    double sl = zoneLowerBound - (30 * _Point);
-    double tp = ask + ((ask - sl) * 1.5);
+    double sl = zoneLowerBound - (30 * _Point); 
+    double tp = ask + ((ask - sl) * 1.5); 
     
     double slPoints = (ask - sl) / _Point;
     double lot = CalculateDynamicLot(slPoints);
@@ -474,8 +466,8 @@ void ExecuteBuyOrder(double ask, double bid)
 //+------------------------------------------------------------------+
 void ExecuteSellOrder(double ask, double bid)
 {
-    double sl = zoneUpperBound + (30 * _Point);
-    double tp = bid - ((sl - bid) * 1.5);
+    double sl = zoneUpperBound + (30 * _Point); 
+    double tp = bid - ((sl - bid) * 1.5); 
     
     double slPoints = (sl - bid) / _Point;
     double lot = CalculateDynamicLot(slPoints);
@@ -498,5 +490,68 @@ void ExecuteSellOrder(double ask, double bid)
     else
     {
         Print("SELL Failed: ", GetLastError());
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Module 10: Auto Breakeven (Trade Management)                     |
+//+------------------------------------------------------------------+
+void CheckBreakeven(double ask, double bid)
+{
+    int totalPositions = PositionsTotal();
+    if(totalPositions == 0) return;
+
+    for(int i = totalPositions - 1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket <= 0) continue;
+
+        // Filter hanya untuk symbol EA ini
+        if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+        if(PositionGetInteger(POSITION_MAGIC) != 123456) continue;
+
+        double entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+        double currentSL = PositionGetDouble(POSITION_SL);
+        double currentTP = PositionGetDouble(POSITION_TP);
+        long type = PositionGetInteger(POSITION_TYPE);
+        
+        // Jika SL sudah 0, skip (belum ada proteksi awal atau sudah dihapus manual)
+        if(currentSL == 0) continue;
+
+        double distance1R = MathAbs(entryPrice - currentSL);
+        double bufferBE = 10 * _Point; // Buffer 1 pip/point
+        double newSL = 0;
+        bool modifyNeeded = false;
+
+        if(type == POSITION_TYPE_BUY)
+        {
+            // Aturan Buy: Jika Bid >= Entry + 1R DAN SL masih di bawah Entry
+            if(bid >= (entryPrice + distance1R) && currentSL < entryPrice)
+            {
+                newSL = entryPrice + bufferBE;
+                modifyNeeded = true;
+            }
+        }
+        else if(type == POSITION_TYPE_SELL)
+        {
+            // Aturan Sell: Jika Ask <= Entry - 1R DAN SL masih di atas Entry (atau 0)
+            if(ask <= (entryPrice - distance1R) && currentSL > entryPrice)
+            {
+                newSL = entryPrice - bufferBE;
+                modifyNeeded = true;
+            }
+        }
+
+        if(modifyNeeded)
+        {
+            if(trade.PositionModify(ticket, newSL, currentTP))
+            {
+                Print("Breakeven Applied for Ticket #", ticket, " New SL: ", newSL);
+            }
+            else
+            {
+                Print("Breakeven Failed for Ticket #", ticket, " Error: ", GetLastError());
+            }
+        }
     }
 }
