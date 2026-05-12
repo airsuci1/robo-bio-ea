@@ -427,7 +427,7 @@ double CalculateDynamicLot(double stopLossPoints)
     double riskAmount = balance * 0.01; // 1% Fixed
     
     double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TICK_VALUE);
-    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TICK_SIZE);
+    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
     
     if(tickValue == 0 || tickSize == 0) return 0;
     
