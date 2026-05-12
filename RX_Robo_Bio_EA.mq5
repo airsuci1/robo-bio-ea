@@ -257,7 +257,7 @@ void CheckZoneMitigation()
 {
     if(!zoneIsActive) return;
 
-    double currentPrice = (currentZoneType == "Demand") ? Bid : Ask;
+    double currentPrice = (currentZoneType == "Demand") ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
     bool broken = false;
 
     // Cek jika harga menembus zona (Mitigated/Broken)
@@ -328,17 +328,17 @@ bool IsPinbarRejection(int mode)
 //+------------------------------------------------------------------+
 bool IsConfirmation(int mode)
 {
-    // Konfirmasi: Harga saat ini (Bid/Ask) menembus High/Low candle rejection (index 1)
+    // Konfirmasi: Harga saat ini (SymbolInfoDouble(_Symbol, SYMBOL_BID)/SymbolInfoDouble(_Symbol, SYMBOL_ASK)) menembus High/Low candle rejection (index 1)
     double highPrev = iHigh(_Symbol, _Period, 1);
     double lowPrev = iLow(_Symbol, _Period, 1);
     
     if(mode == 1) // Buy Confirmation
     {
-        return (Ask > highPrev);
+        return (SymbolInfoDouble(_Symbol, SYMBOL_ASK) > highPrev);
     }
     else if(mode == -1) // Sell Confirmation
     {
-        return (Bid < lowPrev);
+        return (SymbolInfoDouble(_Symbol, SYMBOL_BID) < lowPrev);
     }
     
     return false;
